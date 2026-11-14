@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 cortex-core = { path = "../cortex-core" }
 cortex-git = { path = "../cortex-git" }
 cortex-index = { path = "../cortex-index" }

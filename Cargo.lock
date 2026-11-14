@@ -505,6 +505,8 @@ dependencies = [
  "cortex-store",
  "criterion",
  "getrandom 0.4.3",
+ "hyper",
+ "hyper-util",
  "interprocess",
  "rusqlite",
  "serde",

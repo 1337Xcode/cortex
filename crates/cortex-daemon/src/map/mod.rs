@@ -5,8 +5,9 @@
 //! token, and serves from then on; later asks get the same address. The listener is a task of
 //! the daemon's runtime. [`Map::stop`], when the daemon stops, closes the listener, so the port
 //! refuses connections from then on, and ends every open connection the next time the server waits
-//! on it. A connection also ends once no byte has gone either way for [`IDLE_LIMIT`], and at most
-//! [`MAX_CONNECTIONS`] are open at once. Every request passes the guard ([`guard`]) before
+//! on it. A connection also ends once no byte has gone either way for [`IDLE_LIMIT`], or when a
+//! request's head has not arrived in full within [`HEAD_LIMIT`], and at most [`MAX_CONNECTIONS`]
+//! are open at once. Every request passes the guard ([`guard`]) before
 //! anything is served; [`site`] says what is served and with which headers. The map reads what
 //! the daemon holds and changes nothing.
 
@@ -35,7 +36,7 @@ use cortex_core::ipc::{MapAnswer, ResponseBody};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use self::connections::Capped;
+use self::connections::{Capped, serve_capped};
 pub(crate) use self::settings::MapSettings;
 use self::site::Site;
 pub(crate) use self::source::Source;
@@ -53,11 +54,18 @@ const CONFIGURED_WITHIN: Duration = Duration::from_secs(10);
 const MAX_CONNECTIONS: usize = 64;
 
 /// How long a connection may go with no byte either way before it is closed, giving its slot
-/// back: long enough for a page left open between two requests (a browser opens a new connection
-/// when it finds one closed), and short enough that connections opened and left silent cannot
-/// keep the user's own browser out for long. A web socket stays open by sending pings well within
-/// it.
+/// back, while a request is under way or after a web socket opened: a body announced and never
+/// sent, an answer the client stops reading. A web socket stays open by its pings, sent well
+/// within it. Between requests the shorter [`HEAD_LIMIT`] applies.
 const IDLE_LIMIT: Duration = Duration::from_secs(30);
+
+/// How long the server waits for a request's head, its request line and headers, to arrive in
+/// full: from when it starts waiting for one, so on a kept-alive connection this is also how long
+/// the connection may sit between two requests (a browser opens a new connection when it finds one
+/// closed). A browser sends a head in one go; this bounds a client that sends one byte at a time
+/// to keep its connection without ever asking anything. A request the guard refuses ends its
+/// connection, so a client without the token gets one head a connection.
+const HEAD_LIMIT: Duration = Duration::from_secs(10);
 
 /// The map server: unconfigured, configured, or serving.
 #[derive(Debug)]
@@ -234,13 +242,9 @@ fn start(port: u16, source: &Arc<Source>) -> Result<Serving, Failed> {
         .with_state(Arc::new(site));
     let (stop, stopped) = watch::channel(false);
     // INVARIANT: budgeted (at most MAX_CONNECTIONS connections at once, each ended after
-    // IDLE_LIMIT without a byte either way)
+    // IDLE_LIMIT without a byte either way, or HEAD_LIMIT waiting for a request's head)
     let capped = Capped::new(listener, MAX_CONNECTIONS, IDLE_LIMIT, stopped);
-    let task = tokio::spawn(async move {
-        if let Err(error) = axum::serve(capped, router).await {
-            tracing::warn!(error = %error, "the map stopped serving");
-        }
-    });
+    let task = tokio::spawn(serve_capped(capped, router, HEAD_LIMIT));
     tracing::info!(port, "the map is served");
     Ok(Serving {
         url,

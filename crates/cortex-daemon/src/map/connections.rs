@@ -2,7 +2,7 @@
 //! user's browser could otherwise open connections to it without end. A connection past the cap
 //! is closed as soon as it is accepted, before anything is read from it. Each connection it gives
 //! the server is [`Bounded`]: it ends when idle too long or when the map stops, giving its slot
-//! back.
+//! back. [`serve_capped`] serves on it with a limit on how long a request's head may take.
 
 use std::io;
 use std::net::SocketAddr;
@@ -11,7 +11,11 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use axum::Router;
 use axum::serve::Listener;
+use hyper::server::conn::http1;
+use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::service::TowerToHyperService;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
@@ -76,6 +80,34 @@ impl Listener for Capped {
     }
 }
 
+/// Serves `router` on every connection `listener` accepts, each request's head (its request line
+/// and headers) to arrive in full within `head_limit`, or the connection is closed. The idle limit
+/// alone does not bound this: a byte every few seconds keeps a connection from being idle, so a
+/// local process could hold every slot by dribbling heads it never finishes. The limit runs again
+/// for each request a kept-alive connection makes, from when the server starts waiting for it.
+/// Runs until its task is stopped.
+pub(crate) async fn serve_capped(mut listener: Capped, router: Router, head_limit: Duration) {
+    loop {
+        let (connection, _address) = Listener::accept(&mut listener).await;
+        let service = TowerToHyperService::new(router.clone());
+        tokio::spawn(async move {
+            let mut builder = http1::Builder::new();
+            // INVARIANT: budgeted (a request's head arrives within head_limit or its connection
+            // ends, giving its slot back)
+            builder
+                .timer(TokioTimer::new())
+                .header_read_timeout(head_limit);
+            let served = builder
+                .serve_connection(TokioIo::new(connection), service)
+                .with_upgrades()
+                .await;
+            if let Err(error) = served {
+                tracing::debug!(error = %error, "a map connection ended");
+            }
+        });
+    }
+}
+
 /// An accepted connection, holding its permit until it closes.
 #[derive(Debug)]
 pub(crate) struct Held {
@@ -126,7 +158,7 @@ mod tests {
     use axum::Router;
 
     use super::*;
-    use crate::map::{IDLE_LIMIT, MAX_CONNECTIONS};
+    use crate::map::{HEAD_LIMIT, IDLE_LIMIT, MAX_CONNECTIONS};
 
     /// Result type for these tests: any failure fails the test.
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -135,19 +167,28 @@ mod tests {
     const WAIT: Duration = Duration::from_secs(10);
 
     /// A server answering `ok` to every request on 127.0.0.1, behind a listener capped at
-    /// `max_connections`, each ended when idle for `idle_limit`; its port, and the sender of its
-    /// stop, which ends it when dropped.
+    /// `max_connections`, each ended when idle for `idle_limit`, its heads given the map's own
+    /// limit; its port, and the sender of its stop, which ends it when dropped.
     fn serve(
         runtime: &tokio::runtime::Runtime,
         max_connections: usize,
         idle_limit: Duration,
+    ) -> TestResult<(u16, watch::Sender<bool>)> {
+        serve_with_head_limit(runtime, (max_connections, idle_limit), HEAD_LIMIT)
+    }
+
+    /// [`serve`], each request's head to arrive within `head_limit`.
+    fn serve_with_head_limit(
+        runtime: &tokio::runtime::Runtime,
+        (max_connections, idle_limit): (usize, Duration),
+        head_limit: Duration,
     ) -> TestResult<(u16, watch::Sender<bool>)> {
         let listener = runtime.block_on(TcpListener::bind((Ipv4Addr::LOCALHOST, 0)))?;
         let port = listener.local_addr()?.port();
         let (stop, stopped) = watch::channel(false);
         let capped = Capped::new(listener, max_connections, idle_limit, stopped);
         let router = Router::new().fallback(|| async { "ok" });
-        runtime.spawn(async move { axum::serve(capped, router).await });
+        runtime.spawn(serve_capped(capped, router, head_limit));
         Ok((port, stop))
     }
 
@@ -246,6 +287,95 @@ mod tests {
         let mut announced = answered(port, announced)?;
         assert!(is_closed(&mut announced));
         answered(port, GET)?;
+        Ok(())
+    }
+
+    /// With one slot, an idle limit of 30 s and a head limit of 1 s: a client that sends its head
+    /// one byte every 100 ms, never idle, never finishing it, is closed once the head limit has
+    /// passed, long before the idle limit, and its slot is free again. Without the head limit only
+    /// the idle limit would end it, and the dribble keeps it from ever being idle.
+    #[test]
+    fn a_head_dribbled_byte_by_byte_is_cut_at_the_head_limit() -> TestResult {
+        let runtime = runtime()?;
+        let head_limit = Duration::from_secs(1);
+        let (port, _stop) = serve_with_head_limit(&runtime, (1, IDLE_LIMIT), head_limit)?;
+        let mut stream = std::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
+        let started = Instant::now();
+        let mut is_cut = false;
+        for byte in "GET / HTTP/1.1\r\nX-Slow: "
+            .bytes()
+            .chain(std::iter::repeat(b'a'))
+        {
+            if started.elapsed() > WAIT {
+                break;
+            }
+            if stream.write_all(&[byte]).is_err() {
+                is_cut = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let elapsed = started.elapsed();
+        assert!(is_cut, "still open after {elapsed:?}");
+        assert!(elapsed >= head_limit, "cut after {elapsed:?}");
+        // The limit, a write or two to see the cut, and room for a loaded machine: well short of
+        // the idle limit, which is what would end it without the head limit.
+        assert!(elapsed < head_limit * 5, "cut after {elapsed:?}");
+        answered(port, GET)?;
+        Ok(())
+    }
+
+    /// With a head limit of 1 s and an idle limit of 30 s, a kept-alive connection: two more
+    /// requests, each 800 ms after the answer before it, are answered on the same connection, the
+    /// third 1.6 s after the connection opened, which a limit started once would have cut; left
+    /// silent after that, the connection is closed by the head limit, before 5 s, long before the
+    /// idle limit.
+    #[test]
+    fn the_head_limit_runs_again_for_each_request() -> TestResult {
+        let runtime = runtime()?;
+        let head_limit = Duration::from_secs(1);
+        let (port, _stop) = serve_with_head_limit(&runtime, (1, IDLE_LIMIT), head_limit)?;
+        let opened = Instant::now();
+        let mut stream = sent(port, GET)?;
+        assert!(is_answered(&mut stream));
+        for _ in 0..2 {
+            std::thread::sleep(Duration::from_millis(800));
+            stream.write_all(format!("{GET}\r\n\r\n").as_bytes())?;
+            assert!(is_answered(&mut stream));
+        }
+        assert!(opened.elapsed() > head_limit, "{:?}", opened.elapsed());
+        let silent = Instant::now();
+        assert!(is_closed(&mut stream));
+        let elapsed = silent.elapsed();
+        assert!(
+            elapsed >= head_limit && elapsed < head_limit * 5,
+            "{elapsed:?}"
+        );
+        Ok(())
+    }
+
+    /// An answer that says `Connection: close`, as every refusal of the guard does, ends its
+    /// connection once written: the client reads the answer, then the connection's end, with the
+    /// limits far off.
+    #[test]
+    fn an_answer_saying_close_ends_its_connection() -> TestResult {
+        let runtime = runtime()?;
+        let listener = runtime.block_on(TcpListener::bind((Ipv4Addr::LOCALHOST, 0)))?;
+        let port = listener.local_addr()?.port();
+        let (_stop, stopped) = watch::channel(false);
+        let capped = Capped::new(listener, 1, IDLE_LIMIT, stopped);
+        let router = Router::new()
+            .fallback(|| async { ([(axum::http::header::CONNECTION, "close")], "ok") });
+        runtime.spawn(serve_capped(capped, router, HEAD_LIMIT));
+        let mut stream = sent(port, GET)?;
+        let started = Instant::now();
+        assert!(is_answered(&mut stream));
+        assert!(is_closed(&mut stream));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
         Ok(())
     }
 }

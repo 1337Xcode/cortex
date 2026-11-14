@@ -17,8 +17,8 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::header::InvalidHeaderValue;
 use axum::http::header::{
-    ALLOW, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderName, LOCATION,
-    ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
+    ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderName,
+    LOCATION, ORIGIN, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -131,7 +131,16 @@ impl Site {
             path: parts.uri.path(),
         };
         match admit(&asked, self.port, &self.token) {
-            Verdict::Refuse(status) => self.empty(status),
+            Verdict::Refuse(status) => {
+                let mut response = self.empty(status);
+                // INVARIANT: budgeted (a request the guard refuses, whose sender may hold no
+                // token, ends its connection once answered: one request per connection, so the
+                // head limit bounds how long such a client holds a slot)
+                response
+                    .headers_mut()
+                    .insert(CONNECTION, HeaderValue::from_static("close"));
+                response
+            }
             Verdict::AddSlash => self.add_slash(),
             Verdict::Serve(rest) => {
                 // The path is copied so that a web socket's opening can take its upgrade out of
@@ -451,9 +460,20 @@ mod tests {
         Ok(())
     }
 
+    /// Whether `response` asks for its connection to be closed once it is written.
+    fn closes(response: &Response) -> bool {
+        response
+            .headers()
+            .get(CONNECTION)
+            .map(HeaderValue::as_bytes)
+            == Some(&b"close"[..])
+    }
+
     /// The guard's refusals reach the answer: a foreign origin 403, a method other than GET 405
-    /// saying GET is taken, two Host headers 403; each with an empty body and the common headers.
-    /// The token without its slash is sent on to the address with it.
+    /// saying GET is taken, two Host headers 403, an address without the token 404; each with an
+    /// empty body and the common headers, and each closing its connection, so that a sender
+    /// without the token makes one request a connection. The token without its slash is sent on
+    /// to the address with it, and an answer under the token keeps its connection.
     #[test]
     fn refusals_are_empty_and_carry_the_headers() -> TestResult {
         let token = Token::generate()?;
@@ -467,6 +487,7 @@ mod tests {
         )?;
         assert_eq!(given, (403, None, Vec::new()));
         assert_common_headers(&foreign);
+        assert!(closes(&foreign));
         let (post, given) = get(&site, &Method::POST, &health, &[])?;
         assert_eq!(given, (405, None, Vec::new()));
         assert_eq!(
@@ -474,8 +495,16 @@ mod tests {
             Some(&b"GET"[..])
         );
         assert_common_headers(&post);
-        let (_, given) = get(&site, &Method::GET, &health, &[("host", "127.0.0.1:8123")])?;
+        assert!(closes(&post));
+        let (doubled, given) = get(&site, &Method::GET, &health, &[("host", "127.0.0.1:8123")])?;
         assert_eq!(given, (403, None, Vec::new()));
+        assert!(closes(&doubled));
+        let (tokenless, given) = get(&site, &Method::GET, "/", &[])?;
+        assert_eq!(given.0, 404);
+        assert!(closes(&tokenless));
+        let (served, given) = get(&site, &Method::GET, &health, &[])?;
+        assert_eq!(given.0, 200);
+        assert!(!closes(&served));
         let address = health.trim_end_matches("api/health").to_owned();
         let (moved, given) = get(&site, &Method::GET, address.trim_end_matches('/'), &[])?;
         assert_eq!(given, (308, None, Vec::new()));

@@ -30,6 +30,10 @@ publish = false
 anyhow = "1.0.104"
 # Default features off: the map server needs HTTP/1 on tokio only.
 axum = { version = "0.8.9", default-features = false, features = ["http1", "query", "tokio", "ws"] }
+# The map serves through hyper's own HTTP/1 builder, for its limit on how long a request's head
+# may take, which axum's server does not set. The same versions and features axum already builds.
+hyper = { version = "1.12.0", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server", "service", "tokio"] }
 blake3 = "1.8.7"
 clap = { version = "4.6.7", features = ["derive"] }
 # Windows only: a process started with handle inheritance off, which std cannot do on stable

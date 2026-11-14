@@ -1,11 +1,11 @@
 //! A connection that cannot outlive its use: it ends once no byte has gone either way for its idle
 //! limit, and as soon as the map stops.
 //!
-//! The HTTP server the map uses keeps no clock of its own, so without this a client that opens a
-//! connection and sends nothing, or announces a body it never sends, would hold its connection,
-//! and with it one of the map's few slots, for as long as the daemon runs. Every byte read or
-//! written moves the deadline on, so a connection in use, a web socket whose pings go back and
-//! forth included, is never cut. Once the deadline passes, or the map stops, the next read, write
+//! The server bounds how long it waits for a request's head (the map's head limit), but nothing
+//! else: without this a client that announces a body it never sends, or stops reading an answer,
+//! would hold its connection, and with it one of the map's few slots, for as long as the daemon
+//! runs. Every byte read or written moves the deadline on, so a connection in use, a web socket
+//! whose pings go back and forth included, is never cut. Once the deadline passes, or the map stops, the next read, write
 //! or flush the server waits on fails, and the server drops the connection.
 
 use std::future::Future;
