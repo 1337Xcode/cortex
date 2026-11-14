@@ -486,6 +486,17 @@ fn notices_are_queued_once_and_wait_until_delivered() -> TestResult {
         waiting(&s1, 0)?,
         texts(&[("second", 1_100), ("first", 5_000)])
     );
+    // Deleted by age, delivered or not: before 1,150 takes the first (1,000, delivered), the
+    // other (1,050) and the second (1,100); the told one (1,200) and the last first (5,000) stay.
+    let mut transaction = writer.transaction()?;
+    let deleted = (
+        transaction.delete_notices_before(900)?,
+        transaction.delete_notices_before(1_150)?,
+    );
+    transaction.commit()?;
+    assert_eq!(deleted, (0, 3));
+    assert_eq!(waiting(&s1, 0)?, texts(&[("first", 5_000)]));
+    assert_eq!(waiting(&s2, 0)?, []);
     Ok(())
 }
 

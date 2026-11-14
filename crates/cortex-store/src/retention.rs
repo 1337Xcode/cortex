@@ -75,6 +75,20 @@ pub(crate) fn delete_positions(connection: &Connection, before_ms: i64) -> Resul
     )
 }
 
+/// Deletes every notice made before `before_ms`, delivered or not: how many.
+///
+/// # Errors
+///
+/// SQLite errors.
+pub(crate) fn delete_notices(connection: &Connection, before_ms: i64) -> Result<u64, StoreError> {
+    run(
+        connection,
+        schema::NOTICES_DELETE_BEFORE,
+        [before_ms],
+        "deleting old notices",
+    )
+}
+
 /// Deletes at most `limit` facts retired before `before_ms`, with their anchors and the record of
 /// the tasks they were given in: how many facts.
 ///

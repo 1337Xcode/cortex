@@ -705,6 +705,15 @@ impl WriteTx<'_> {
         self.atomically(|connection| retention::delete_positions(connection, before_ms))
     }
 
+    /// Deletes every notice made before `before_ms`, delivered or not: how many.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::TransactionLost`] and SQLite errors.
+    pub fn delete_notices_before(&mut self, before_ms: i64) -> Result<u64, StoreError> {
+        self.atomically(|connection| retention::delete_notices(connection, before_ms))
+    }
+
     /// Deletes at most `limit` facts retired before `before_ms`, with their anchors and the
     /// record of the tasks they were given in: how many facts.
     ///

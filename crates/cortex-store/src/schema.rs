@@ -930,6 +930,8 @@ pub(crate) const EPISODES_OVER_CAP: &str = "DELETE FROM episodes WHERE episode_i
      LIMIT min(?2, max(0, (SELECT count(*) FROM episodes) - ?1)))";
 /// Deletes the positions last taken before ?1.
 pub(crate) const POSITIONS_DELETE_BEFORE: &str = "DELETE FROM positions WHERE last_ts < ?1";
+/// Deletes every notice made before ?1, delivered or not.
+pub(crate) const NOTICES_DELETE_BEFORE: &str = "DELETE FROM notices WHERE created_at < ?1";
 /// At most ?2 facts retired before ?1, by id.
 pub(crate) const FACTS_RETIRED_BEFORE: &str = "SELECT fact_id FROM facts \
      WHERE status = 'retired' AND status_at < ?1 ORDER BY fact_id LIMIT ?2";

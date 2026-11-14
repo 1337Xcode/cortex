@@ -330,6 +330,7 @@ impl<'a> Host<'a> {
                     injections = swept.injections,
                     episodes = swept.episodes,
                     positions = swept.positions,
+                    notices = swept.notices,
                     handoff_failures = swept.handoff_failures,
                     handoffs = swept.handoffs,
                     blames = swept.blames,
