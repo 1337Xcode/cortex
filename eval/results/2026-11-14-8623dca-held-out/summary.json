@@ -1,0 +1,37 @@
+{
+  "runs": 120,
+  "incomplete": [],
+  "success": {
+    "value": 0.9833333333333333,
+    "low": 0.9583333333333334,
+    "high": 1.0
+  },
+  "delivered": 0,
+  "labelled": 0,
+  "used": 0,
+  "precision": null,
+  "median_cumulative_input": 209157.5,
+  "median_turns": 8.0,
+  "median_tool_calls": 7.0,
+  "cost_usd": 19.0452858,
+  "agents": [
+    "2.1.318 claude-sonnet-5-5 at medium effort via none"
+  ],
+  "failed_sessions": 0,
+  "shown": {
+    "lines": 0,
+    "differ": 0,
+    "unread_sessions": 0
+  },
+  "texts": {
+    "session_start": {
+      "count": 210,
+      "tokens": 9195
+    }
+  },
+  "texts_share": 0.0018189992769486005,
+  "warnings": {},
+  "warning_precision": null,
+  "notes": 9,
+  "without_facts": 0
+}
