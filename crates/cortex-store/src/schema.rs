@@ -560,9 +560,11 @@ pub(crate) const EDGES_FROM: &str = "SELECT src, dst, type, w, n, last_seq, dire
 pub(crate) const EDGES_AMONG: &str = "SELECT src, dst, type, w, n, last_seq, directed FROM edges \
      WHERE type = ?1 AND src IN (SELECT value FROM json_each(?2)) \
      AND dst IN (SELECT value FROM json_each(?2)) ORDER BY src, dst";
-/// Sets an edge's weight, count and task, adding it if it is not there.
+/// Sets an edge's weight, count and task, adding it if it is not there; nothing when either end is a
+/// node the index has removed since the edge was worked out.
 pub(crate) const EDGE_SET: &str = "INSERT INTO edges (src, dst, type, w, n, last_seq, directed) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (src, dst, type) DO UPDATE SET \
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM nodes WHERE node_id = ?1) \
+     AND EXISTS (SELECT 1 FROM nodes WHERE node_id = ?2) ON CONFLICT (src, dst, type) DO UPDATE SET \
      w = excluded.w, n = excluded.n, last_seq = excluded.last_seq, directed = excluded.directed";
 /// The nodes the edges of a type into a node start from, in order.
 pub(crate) const SOURCES_INTO: &str =
@@ -585,9 +587,11 @@ pub(crate) const INTEREST_OF: &str = "SELECT node_id, score, last_seq, tier FROM
 pub(crate) const FILE_INTEREST_FROM: &str = "SELECT i.node_id, i.score, i.last_seq, i.tier \
      FROM interest AS i JOIN nodes AS n ON n.node_id = i.node_id \
      WHERE n.kind = 'file' AND i.score >= ?1 ORDER BY i.node_id";
-/// Writes a node's interest, replacing what it had.
+/// Writes a node's interest, replacing what it had; nothing for a node the index has removed since
+/// the interest was earned.
 pub(crate) const INTEREST_REPLACE: &str = "INSERT INTO interest (node_id, score, last_seq, tier) \
-     VALUES (?1, ?2, ?3, ?4) ON CONFLICT (node_id) DO UPDATE SET score = excluded.score, \
+     SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM nodes WHERE node_id = ?1) \
+     ON CONFLICT (node_id) DO UPDATE SET score = excluded.score, \
      last_seq = excluded.last_seq, tier = excluded.tier";
 
 /// Writes one response's usage, replacing what its session and turn had.
@@ -688,9 +692,11 @@ pub(crate) const TRANSITIONS_FROM: &str = "SELECT src, dst, weight, count, last_
 pub(crate) const TRANSITIONS_AFTER: &str = "SELECT src, dst, weight, count, last_seq \
     FROM transitions WHERE (src, dst) > (?1, ?2) ORDER BY src, dst LIMIT ?3";
 
-/// Sets a transition's weight, count and task, adding it when it is not there.
+/// Sets a transition's weight, count and task, adding it when it is not there; nothing when either
+/// file is one the index has removed since the transition was worked out.
 pub(crate) const TRANSITION_SET: &str = "INSERT INTO transitions (src, dst, weight, count, last_seq) \
-    VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (src, dst) DO UPDATE SET \
+    SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (SELECT 1 FROM nodes WHERE node_id = ?1) \
+    AND EXISTS (SELECT 1 FROM nodes WHERE node_id = ?2) ON CONFLICT (src, dst) DO UPDATE SET \
     weight = excluded.weight, count = excluded.count, last_seq = excluded.last_seq";
 
 /// Removes the transitions from each pair's first file to its second, the pairs a JSON array of

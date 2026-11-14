@@ -144,6 +144,49 @@ fn two_files(store: &mut Store) -> TestResult<(NodeId, NodeId)> {
     ))
 }
 
+/// A file the task worked on and the index then removed, before the task ended (the agent deleted
+/// it), takes nothing from the task's end, and the end is still learned from: the task passed its
+/// tests after editing `calc/ops.py` and `calc/util.py`, and `calc/ops.py` was gone from the index
+/// by the stop. `calc/util.py` earns its 1.5 as in the test below; `calc/ops.py` has no node left to
+/// hold interest or a link, so none is written for it, and nothing fails for want of it.
+#[test]
+fn a_file_removed_before_the_task_ended_does_not_stop_its_learning() -> TestResult {
+    let mut store = Store::new()?;
+    let mut learning = Learning::new();
+    let nodes = store.index_text_at(
+        &[("calc/ops.py", "x = 1\n"), ("calc/util.py", "y = 1\n")],
+        1,
+    )?;
+    let util = nodes.get(1).copied().ok_or("no file")?;
+    let mut events = vec![start("s1", 1_000, StartSource::Startup)?];
+    events.extend(task(
+        "s1",
+        1_001,
+        vec![
+            edit("s1", 1_002, "calc/ops.py")?,
+            edit("s1", 1_003, "calc/util.py")?,
+            shell("s1", 1_004, "cargo test", Some(0))?,
+        ],
+    )?);
+    let stop = events.pop().ok_or("the task's stop")?;
+    assert!(learning.feed(&mut store, &events)?.is_empty());
+    let mut transaction = store.writer.transaction()?;
+    transaction.remove_file(&cortex_core::RepoPath::new("calc/ops.py")?)?;
+    transaction.commit()?;
+    let (task_id, found) = learning.one(&mut store, &[stop])?;
+    assert_eq!(found_as(&found), (TaskOutcome::Success, None));
+    assert_eq!(recorded(&store, task_id)?, TaskOutcome::Success);
+    let interest: Vec<(NodeId, f64)> = store
+        .writer
+        .queries()
+        .interest_of(&[util])?
+        .into_iter()
+        .map(|row| (row.node, row.score))
+        .collect();
+    assert_eq!(interest, [(util, 1.5)]);
+    Ok(())
+}
+
 /// A task that changes two files and then passes its tests is a success, and its end leaves every
 /// mark, worked out by hand from the settings' defaults. The words: `cargo`'s tests exited 0 after
 /// the last edit. Each file earns 1.0 for its edit and 0.5 for the passing run after it, 1.5,
