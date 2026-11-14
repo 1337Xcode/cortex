@@ -160,6 +160,39 @@ fn an_edit_goes_to_the_session_most_recently_active() -> TestResult {
     Ok(())
 }
 
+/// An edit seen before the session's open task started is the session's, not the task's, though it
+/// is recorded after the prompt, as a held edit is: `s1` starts at 10,000, the watcher sees
+/// `a.py` saved at 10,800, and `s1` prompts at 11,000 (task T1) before the edit is due. The edit
+/// counts for `s1`, whose start is 800 ms before it, with no task. `b.py`, seen at 11,500, after
+/// the prompt, is T1's.
+#[test]
+fn an_edit_seen_before_the_prompt_is_not_its_task_s() -> TestResult {
+    let mut store = Store::new()?;
+    let mut recorder = Recorder::new(false, 0.0, Commands::default());
+    let asked = prompt("s1", 11_000, "fix it")?;
+    let t1 = task_of(&asked)?;
+    store.record(
+        &mut recorder,
+        &[start("s1", 10_000, StartSource::Startup)?, asked],
+    )?;
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("a.py", 10_800))?,
+        session("s1")?
+    );
+    assert_eq!(
+        watcher_edit(&mut store, &mut recorder, ("b.py", 11_500))?,
+        session("s1")?
+    );
+    assert_eq!(
+        watcher_rows(&store)?,
+        [
+            watched("a.py", 10_800, (Some("s1"), None), None)?,
+            watched("b.py", 11_500, (Some("s1"), Some(t1)), None)?,
+        ]
+    );
+    Ok(())
+}
+
 /// A hook's edit of the same file at most 2 s before or after the watcher saw it is the same edit:
 /// `s1` edits `d.py` at 30,000, so the watcher's edits of it at 28,500 and 31,500 are reported
 /// and leave no row; at 32,500 it is another edit, `s1`'s. `e.py`, which no hook edited, is

@@ -6,7 +6,9 @@
 //! the same edit, already recorded. An edit no hook claims is recorded for the session that was
 //! at work at the time: of those not ended before the edit, the one with the latest event from
 //! [`ATTRIBUTION_WINDOW_MS`] before it to [`HOLD_MS`] after it, a subagent's events counting for
-//! the session that started it; or for no session, as the watcher's.
+//! the session that started it; or for no session, as the watcher's. It goes in that session's
+//! open task, unless the task started after the edit was seen: a prompt typed just after a file was
+//! saved does not make the save the task's.
 //!
 //! Each held edit also keeps what its file held before, as the index found it. The task an edit is
 //! recorded in keeps that as the file's content before the task: a hook's edit takes it from the
@@ -15,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use cortex_core::{EventKind, EventMeta, EventSource, FileContent, Identifier, RepoPath};
+use cortex_core::{EventKind, EventMeta, EventSource, FileContent, Identifier, RepoPath, Ulid};
 use cortex_store::{EventRecord, StoreError, WriteTx};
 
 use crate::Recorder;
@@ -159,6 +161,13 @@ impl Recorder {
             Some(session_id) => self.task_of_session(transaction, session_id)?,
             None => None,
         };
+        // The edit is held for a while before it is recorded, so the session's open task may be one
+        // its prompt started after the edit was seen; the edit was made before that task, which
+        // must not count it as its own.
+        let task = match task {
+            Some(task_id) if started_after(transaction, task_id, edit.seen_ms)? => None,
+            task => task,
+        };
         let node_id = transaction.queries().file_node_at(&edit.path)?;
         let row = EventRecord {
             task_id: task,
@@ -180,4 +189,10 @@ impl Recorder {
         self.append(transaction, &row, unkept)?;
         Ok(session.map_or(WatcherEdit::Nobody, WatcherEdit::Session))
     }
+}
+
+/// Whether the task `task_id` started after `at_ms`, in UTC milliseconds, as the store holds it.
+fn started_after(transaction: &WriteTx<'_>, task_id: Ulid, at_ms: i64) -> Result<bool, StoreError> {
+    let task = transaction.queries().task(task_id)?;
+    Ok(task.is_some_and(|task| task.record.started_at_ms > at_ms))
 }
