@@ -108,6 +108,9 @@ struct RunArgs {
     /// The model Claude Code runs.
     #[arg(long, default_value = "sonnet")]
     model: String,
+    /// The effort level Claude Code runs at.
+    #[arg(long, default_value = "medium", value_parser = ["low", "medium", "high", "xhigh", "max"])]
+    effort: String,
     /// A testbed copied from a folder holding its commit, as `name=folder`, instead of cloned.
     #[arg(long = "from")]
     from: Vec<String>,
@@ -279,6 +282,7 @@ fn run(args: &RunArgs) -> anyhow::Result<()> {
     let settings = Settings {
         cortex: std::fs::canonicalize(&args.cortex).context("finding the cortex binary")?,
         model: args.model.clone(),
+        effort: args.effort.clone(),
         claude_config: args
             .claude_config
             .clone()

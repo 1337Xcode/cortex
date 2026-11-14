@@ -151,6 +151,7 @@ mod tests {
             config: Vec::new(),
             facts: None,
             notes: 0,
+            effort: None,
         }
     }
 

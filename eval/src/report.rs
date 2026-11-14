@@ -91,16 +91,18 @@ pub(crate) fn summary(runs: &[TaskRun], incomplete: &[Incomplete]) -> Summary {
         median(&values)
     };
     let sessions = runs.iter().flat_map(|run| run.sessions.iter());
-    let agents: BTreeSet<String> = sessions
-        .clone()
-        .map(|session| {
+    let agents: BTreeSet<String> = runs
+        .iter()
+        .flat_map(|run| run.sessions.iter().map(move |session| (run, session)))
+        .map(|(run, session)| {
             format!(
-                "{} {} via {}",
+                "{} {} at {} effort via {}",
                 session
                     .agent_version
                     .as_deref()
                     .unwrap_or("unknown version"),
                 session.model.as_deref().unwrap_or("unknown model"),
+                run.effort.as_deref().unwrap_or("the default"),
                 session
                     .api_key_source
                     .as_deref()
@@ -347,6 +349,7 @@ mod tests {
             config: Vec::new(),
             facts: None,
             notes: 0,
+            effort: None,
         }
     }
 
@@ -398,7 +401,7 @@ mod tests {
         assert_eq!(summary.median_turns, Some(2.5));
         assert_eq!(summary.median_tool_calls, Some(5.0));
         assert!((summary.cost_usd - 4.0).abs() < 1e-9);
-        assert_eq!(summary.agents, ["2.1.318 m via none"]);
+        assert_eq!(summary.agents, ["2.1.318 m at the default effort via none"]);
     }
 
     /// The intervals resample whole tasks. Task a's four runs pass and use their work order, task

@@ -46,6 +46,8 @@ pub(crate) struct Settings {
     pub(crate) cortex: PathBuf,
     /// The model the agent runs.
     pub(crate) model: String,
+    /// The effort level the agent runs at, one of Claude Code's `--effort` levels.
+    pub(crate) effort: String,
     /// Claude Code's own configuration folder, where its login is.
     pub(crate) claude_config: PathBuf,
     /// The folder each run's folder is made in.
@@ -111,6 +113,10 @@ pub(crate) struct TaskRun {
     /// tasks had any.
     #[serde(default)]
     pub(crate) notes: u32,
+    /// The effort level the agent ran at; none in results from before the runner set one, which
+    /// ran at Claude Code's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) effort: Option<String>,
 }
 
 /// Runs `task` in a copy of `testbed`, from `from` when given, as run number `run`.
@@ -176,6 +182,7 @@ pub(crate) fn run_task(
         config: settings.config.clone(),
         facts: Some(settings.facts),
         notes,
+        effort: Some(settings.effort.clone()),
     })
 }
 
@@ -302,7 +309,7 @@ fn session(
     let command = agent::command(
         prompt,
         repo,
-        (&settings.model, &task.tools),
+        (&settings.model, &settings.effort, &task.tools),
         (home, &settings.claude_config),
     );
     run_logged(command, stream, SESSION_WITHIN)?;

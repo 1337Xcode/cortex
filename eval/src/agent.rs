@@ -16,18 +16,18 @@ use crate::texts::Texts;
 /// The environment variable left out of every agent's environment.
 const API_KEY_VARIABLE: &str = "ANTHROPIC_API_KEY";
 
-/// The command that runs `prompt` as one headless session of `claude` in `folder`, with `model`,
-/// allowed `tools`, and `home` as its home folder for Cortex while Claude Code keeps its own
-/// configuration in `claude_config`.
+/// The command that runs `prompt` as one headless session of `claude` in `folder`, with `model`
+/// at `effort`, allowed `tools`, and `home` as its home folder for Cortex while Claude Code keeps
+/// its own configuration in `claude_config`.
 pub(crate) fn command(
     prompt: &str,
     folder: &Path,
-    (model, tools): (&str, &[String]),
+    (model, effort, tools): (&str, &str, &[String]),
     (home, claude_config): (&Path, &Path),
 ) -> Command {
     let mut command = Command::new("claude");
     command
-        .args(["-p", prompt, "--model", model])
+        .args(["-p", prompt, "--model", model, "--effort", effort])
         .args(["--output-format", "stream-json", "--verbose"])
         .args(["--setting-sources", "project,local", "--strict-mcp-config"])
         .args(["--permission-mode", "acceptEdits"])
@@ -213,7 +213,7 @@ mod tests {
         let command = command(
             "fix it",
             Path::new("work"),
-            ("sonnet", &tools),
+            ("sonnet", "medium", &tools),
             (Path::new("home"), Path::new("claude")),
         );
         let args: Vec<String> = command
@@ -227,6 +227,8 @@ mod tests {
                 "fix it",
                 "--model",
                 "sonnet",
+                "--effort",
+                "medium",
                 "--output-format",
                 "stream-json",
                 "--verbose",

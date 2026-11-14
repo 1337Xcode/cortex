@@ -29,6 +29,11 @@ cargo run -p cortex-eval -- report eval/results/<date>-<commit>
 cargo run -p cortex-eval -- compare <first arm's folder> <second arm's folder>
 ```
 
+`run` starts Claude Code with `--model sonnet --effort medium` unless `--model` or `--effort` says
+otherwise (`--effort` takes `low`, `medium`, `high`, `xhigh` or `max`), and each run's record keeps
+the effort it ran at; the summary's agents line names it, and says "the default effort" for runs
+recorded before the option existed.
+
 `compare` pairs two arms' runs by task and writes, to the first arm's folder, each measure's mean
 in each arm and the mean per-task difference with its interval: a treated arm against a held-out
 one, or an arm that noted the tasks' project rules against one run with `--without-facts`, which
