@@ -509,6 +509,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- When an agent deleted a file it had worked on during a task, nothing was learned from that task:
+  writing the deleted file's interest failed, and with it the rest of what the task's end records
+  (its outcome, its links, and which work orders the agent used). A file removed before its task
+  ends is now left out of what that task teaches, and the rest is recorded.
 - A file saved just before a prompt (by an editor or a person, so only the file watcher saw it)
   was counted as an edit of the task that prompt started, and the summary given to the agent
   after a compaction said the task had edited it. Such an edit now belongs to the session,
